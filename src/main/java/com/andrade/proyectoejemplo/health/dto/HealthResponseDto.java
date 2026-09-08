@@ -1,4 +1,7 @@
 package com.andrade.proyectoejemplo.health.dto;
 
-public record HealthResponseDto() {
+public record HealthResponseDto(String status, String error) {
+    public HealthResponseDto(String status){
+        this(status, null);
+    }
 }
