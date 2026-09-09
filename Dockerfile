@@ -1,14 +1,15 @@
-# Usamos una imagen ligera de Java 21 para ejecutar la aplicación
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:21-jre-jammy
 
-# Carpeta de trabajo dentro del contenedor
 WORKDIR /app
 
-# Copia el archivo JAR compilado por Gradle desde GitHub Actions hacia el contenedor
-COPY build/libs/*SNAPSHOT.jar app.jar
+# Gradle deposita el JAR compilado en la carpeta 'build/libs/'
+COPY build/libs/*.jar app.jar
 
-# Indicamos que la app escucha internamente en el puerto 8080
-EXPOSE 8080
+# Crear un usuario sin privilegios por seguridad en producción
+RUN useradd -m springuser && chown -R springuser /app
+USER springuser
 
-# Comando para iniciar la aplicación Spring Boot
+# Exponer el puerto de producción (80)
+EXPOSE 80
+
 ENTRYPOINT ["java", "-jar", "app.jar"]
