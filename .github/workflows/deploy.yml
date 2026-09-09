@@ -7,7 +7,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/${{ github.event.repository.name }}
+  IMAGE_NAME: ${{ github.repository }}
   CONTAINER_NAME: spring-app-ejemplo
 
 jobs:
@@ -20,11 +20,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      # Convertir el nombre de la imagen a minúsculas para cumplir con el estándar de Docker
-      - name: Lowercase IMAGE_NAME
-        run: |
-          echo "IMAGE_NAME=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       # 1. Configurar JDK 21 y la caché automática para Gradle
       - name: Set up JDK 21
@@ -66,9 +61,6 @@ jobs:
           port: 22
           envs: TARGET_HOST_IP
           script: |
-            # Forzar que el script se detenga inmediatamente si ocurre un error
-            set -e
-
             # --- APROVISIONAMIENTO IDEMPOTENTE DE SWAP ---
             if [ ! -f /swapfile ]; then
               echo "Instancia sin Swap. Creando 2GB..."
@@ -89,23 +81,32 @@ jobs:
               sudo usermod -aG docker ec2-user
             fi
             
-            # --- EJECUCIÓN SEGURA USANDO SUDO ---
-            # Autenticar el Docker local del EC2 en GHCR
-            echo '${{ secrets.GH_CR_PAT }}' | sudo docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+            # --- EJECUCIÓN SEGURA CON PERMISOS REFRESCADOS ---
+            sg docker -c "
+              # Autenticar el Docker local del EC2 en GHCR
+              echo '${{ secrets.GH_CR_PAT }}' | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
             
-            # Descargar la última versión de la imagen
-            sudo docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+              # Descargar la última versión de la imagen
+              docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             
-            # --- PASOS IDEMPOTENTES DEL CONTENEDOR ---
-            sudo docker stop ${{ env.CONTAINER_NAME }} || true
-            sudo docker rm ${{ env.CONTAINER_NAME }} || true
-            sudo docker image prune -f
+              # --- PASOS IDEMPOTENTES DEL CONTENEDOR ---
+              docker stop ${{ env.CONTAINER_NAME }} || true
+              docker rm ${{ env.CONTAINER_NAME }} || true
+              docker image prune -f
             
-            # --- MAPEO CRUZADO: Puerto 80 del Servidor al 8080 del Contenedor ---
-            sudo docker run -d \
-              --name ${{ env.CONTAINER_NAME }} \
-              -p 80:8080 \
-              -e PORT=8080 \
-              -e PUBLIC_HOST_URL="http://$TARGET_HOST_IP" \
-              --restart unless-stopped \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+              # --- MAPEO CRUZADO: Puerto 80 del Servidor al 8080 del Contenedor ---
+              docker run -d \
+                --name ${{ env.CONTAINER_NAME }} \
+                -p 80:8080 \
+                -e PORT=8080 \
+                -e PUBLIC_HOST_URL='http://$TARGET_HOST_IP' \
+                -e API_GATEWAY_SECRET='${{ secrets.API_GATEWAY_SECRET }}' \
+                -e AWS_REGION='us-east-2' \
+                -e DYNAMO_TABLE_NAME='Products' \
+                --restart unless-stopped \
+                ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            "
+        env:
+          TARGET_HOST_IP: ${{ vars.TARGET_HOST_IP }}
+          API_GATEWAY_SECRET: ${{ secrets.API_GATEWAY_SECRET }}
+          GH_CR_PAT: ${{ secrets.GH_CR_PAT }}
